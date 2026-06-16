@@ -7,6 +7,32 @@ import type { ExamType, Subject } from "@/lib/types/predict";
 
 const VALID_EXAMS: ExamType[] = ["matric", "fsc", "css", "mdcat"];
 
+type SubjectRow = {
+  id: string;
+  name: string;
+  exam_type: ExamType;
+  board_id?: string | null;
+  class_level?: string | null;
+  part?: Subject["part"];
+  stream?: Subject["stream"];
+  is_active?: boolean | null;
+};
+
+function mapSubjectRow(
+  row: SubjectRow,
+  defaults: { boardId: string; part: Subject["part"]; stream: Subject["stream"] }
+): Subject {
+  return {
+    id: row.id,
+    name: row.name,
+    board_id: row.board_id ?? defaults.boardId,
+    exam_type: row.exam_type,
+    part: row.part ?? defaults.part ?? null,
+    stream: row.stream ?? defaults.stream ?? null,
+    is_active: row.is_active ?? undefined,
+  };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const examType = searchParams.get("examType") as ExamType | null;
@@ -41,7 +67,12 @@ export async function GET(request: Request) {
           .order("name");
 
         if (!error && data && data.length > 0) {
-          return NextResponse.json(data as Subject[]);
+          const rows = data as unknown as SubjectRow[];
+          return NextResponse.json(
+            rows.map((row) =>
+              mapSubjectRow(row, { boardId: "", part: null, stream: null })
+            )
+          );
         }
       } else if (boardIdParam) {
       const boardId = isUuid(boardIdParam)
@@ -74,14 +105,11 @@ export async function GET(request: Request) {
       }
 
       if (!error && data && data.length > 0) {
+        const rows = data as unknown as SubjectRow[];
         return NextResponse.json(
-          data.map((row) => ({
-            ...row,
-            board_id: (row as Subject).board_id ?? boardId,
-            part: (row as Subject).part ?? part,
-            stream: (row as Subject).stream ?? stream,
-            is_active: (row as Subject).is_active,
-          })) as Subject[]
+          rows.map((row) =>
+            mapSubjectRow(row, { boardId, part, stream })
+          )
         );
       }
       }

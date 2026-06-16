@@ -1,6 +1,27 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { firstRelation } from "@/lib/supabase/relation";
 import { mapPredictionRow } from "@/lib/prediction/db";
 import type { SavedPredictionItem } from "@/lib/types/saved";
+
+type PredictionJoin = {
+  id: string;
+  subject_id: string;
+  board_id: string;
+  target_year: number;
+  question_text: string;
+  chapter_name: string;
+  chapter_number: number;
+  question_type: string;
+  probability_score: number;
+  frequency_count: number;
+  total_years: number;
+  years_appeared: number[];
+  last_appeared_year: number;
+  trend: string;
+  is_syllabus_flagged: boolean;
+  marks: number | null;
+  subjects: { id: string; name: string } | { id: string; name: string }[] | null;
+};
 
 type SavedRow = {
   id: string;
@@ -8,26 +29,26 @@ type SavedRow = {
   prediction_id: string;
   is_studied: boolean;
   created_at: string;
-  predictions: {
-    id: string;
-    subject_id: string;
-    board_id: string;
-    target_year: number;
-    question_text: string;
-    chapter_name: string;
-    chapter_number: number;
-    question_type: string;
-    probability_score: number;
-    frequency_count: number;
-    total_years: number;
-    years_appeared: number[];
-    last_appeared_year: number;
-    trend: string;
-    is_syllabus_flagged: boolean;
-    marks: number | null;
+  predictions: PredictionJoin & {
     subjects: { id: string; name: string } | null;
   };
 };
+
+type RawSavedRow = Omit<SavedRow, "predictions"> & {
+  predictions: PredictionJoin | PredictionJoin[];
+};
+
+function normalizeSavedRow(row: RawSavedRow): SavedRow | null {
+  const prediction = firstRelation(row.predictions);
+  if (!prediction) return null;
+  return {
+    ...row,
+    predictions: {
+      ...prediction,
+      subjects: firstRelation(prediction.subjects),
+    },
+  };
+}
 
 export async function toggleSavePrediction(
   userId: string,
@@ -136,8 +157,9 @@ export async function fetchUserSavedPredictions(
 
   if (error) throw error;
 
-  return ((data ?? []) as SavedRow[])
-    .filter((row) => row.predictions)
+  return ((data ?? []) as unknown as RawSavedRow[])
+    .map(normalizeSavedRow)
+    .filter((row): row is SavedRow => row !== null)
     .map((row) => {
       const p = row.predictions;
       const mapped = mapPredictionRow({

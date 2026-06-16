@@ -42,6 +42,7 @@ type PredictFormMobileProps = {
   onGenerate: () => void;
   isLoading: boolean;
   isComplete: boolean;
+  hydrated?: boolean;
 };
 
 const STEP_TITLES = [
@@ -71,6 +72,7 @@ export function PredictFormMobile({
   onGenerate,
   isLoading,
   isComplete,
+  hydrated = true,
 }: PredictFormMobileProps) {
   const [step, setStep] = useState(1);
   const scopeFlow = requiresPartAndStream(examType);
@@ -88,7 +90,7 @@ export function PredictFormMobile({
   );
 
   usePredictAutoDefaults({
-    enabled: true,
+    enabled: hydrated,
     examType,
     boardId,
     part,

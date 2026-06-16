@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { FALLBACK_PAPERS } from "@/lib/data/fallback-papers";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { firstRelation } from "@/lib/supabase/relation";
 import type { ExamPart, ExamStream, ExamType } from "@/lib/types/predict";
 import type { Paper, PapersResponse } from "@/lib/types/papers";
 
 const PAGE_SIZE = 20;
 const VALID_EXAMS: ExamType[] = ["matric", "fsc", "css", "mdcat"];
 
-type PaperRow = {
+type RelationRef = { id: string; name: string };
+
+type RawPaperRow = {
   id: string;
   board_id: string;
   subject_id: string;
@@ -18,9 +21,22 @@ type PaperRow = {
   class_level: string | null;
   question_count: number | null;
   pdf_path: string | null;
-  boards: { id: string; name: string } | null;
-  subjects: { id: string; name: string } | null;
+  boards: RelationRef | RelationRef[] | null;
+  subjects: RelationRef | RelationRef[] | null;
 };
+
+type PaperRow = Omit<RawPaperRow, "boards" | "subjects"> & {
+  boards: RelationRef | null;
+  subjects: RelationRef | null;
+};
+
+function normalizePaperRow(row: RawPaperRow): PaperRow {
+  return {
+    ...row,
+    boards: firstRelation(row.boards),
+    subjects: firstRelation(row.subjects),
+  };
+}
 
 async function getSignedUrl(path: string): Promise<string | null> {
   try {
@@ -106,7 +122,8 @@ export async function GET(request: Request) {
 
       if (!error && data && data.length > 0) {
         const papers = await Promise.all(
-          (data as PaperRow[]).map(async (row) => {
+          (data as unknown as RawPaperRow[]).map(async (raw) => {
+            const row = normalizePaperRow(raw);
             const downloadUrl = row.pdf_path
               ? await getSignedUrl(row.pdf_path)
               : null;
