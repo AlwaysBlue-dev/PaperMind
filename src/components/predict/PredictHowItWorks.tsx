@@ -19,7 +19,7 @@ const TERMS = [
   {
     term: "Chapter frequency",
     description:
-      "Shows how often a chapter was tested across past papers, e.g. 7/9 means it appeared in 7 out of 9 exam years in your selected range.",
+      "Shows how often a chapter was tested across exam years we analysed, e.g. 7/10 means it appeared in 7 of 10 years with papers (gaps like a missing 2020 paper are noted above the stats).",
   },
   {
     term: "Trend",

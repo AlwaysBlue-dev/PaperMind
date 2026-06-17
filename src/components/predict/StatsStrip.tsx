@@ -4,6 +4,14 @@ type StatsStripProps = {
   meta: PredictionMeta;
 };
 
+function formatExcludedYears(years: number[]): string {
+  if (years.length === 0) return "";
+  if (years.length === 1) {
+    return `${years[0]} excluded (no paper available)`;
+  }
+  return `${years.join(", ")} excluded (no papers available)`;
+}
+
 export function StatsStrip({ meta }: StatsStripProps) {
   const items = [
     { value: meta.papersAnalysed, label: "Papers analysed" },
@@ -11,15 +19,25 @@ export function StatsStrip({ meta }: StatsStripProps) {
     { value: meta.yearsCovered, label: "Years covered" },
   ];
 
+  const excludedNote =
+    meta.excludedYears && meta.excludedYears.length > 0
+      ? formatExcludedYears(meta.excludedYears)
+      : null;
+
   return (
     <div className="flex flex-col gap-2">
       {meta.yearWindow ? (
-        <p className="text-center text-xs text-foreground-muted">
-          Based on past papers from{" "}
-          <span className="font-medium text-foreground">
-            {meta.yearWindow.from}–{meta.yearWindow.to}
-          </span>
-        </p>
+        <div className="text-center text-xs text-foreground-muted">
+          <p>
+            Based on past papers from{" "}
+            <span className="font-medium text-foreground">
+              {meta.yearWindow.from}–{meta.yearWindow.to}
+            </span>
+          </p>
+          {excludedNote ? (
+            <p className="mt-1 text-[0.7rem] sm:text-xs">{excludedNote}</p>
+          ) : null}
+        </div>
       ) : null}
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
         {items.map(({ value, label }) => (

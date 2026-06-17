@@ -1,5 +1,5 @@
 import {
-  countPapers,
+  countPapersInYears,
   fetchQuestionsForScope,
   type QuestionRow,
   type QuestionScope,
@@ -11,7 +11,6 @@ import {
   type QuestionCluster,
 } from "@/lib/prediction/clustering";
 import { analyzeAppearancePattern } from "@/lib/prediction/patterns";
-import { isYearInRange } from "@/lib/prediction/year-window";
 import type {
   ChapterFrequency,
   PatternHint,
@@ -252,19 +251,17 @@ async function loadQuestions(
     targetYear,
     yearRange
   );
-  const { minYear, maxYear } = window;
-  const distinctYears = new Set(
-    questions
-      .map((q) => q.year)
-      .filter((y) => isYearInRange(y, minYear, maxYear))
-  );
+  const { minYear, maxYear, yearsWithData, excludedYears } = window;
+  const yearCount = yearsWithData.length;
 
   return {
     questions,
     minYear,
     maxYear,
-    totalYears: yearRange,
-    yearsWithData: distinctYears.size,
+    excludedYears,
+    totalYears: yearCount,
+    yearsWithData: yearCount,
+    yearsWithDataList: yearsWithData,
   };
 }
 
@@ -275,22 +272,28 @@ export async function getSubjectStats(
 ): Promise<
   Pick<
     PredictionMeta,
-    "papersAnalysed" | "questionsFound" | "yearsCovered" | "yearWindow"
+    | "papersAnalysed"
+    | "questionsFound"
+    | "yearsCovered"
+    | "yearWindow"
+    | "excludedYears"
   >
 > {
-  const { questions, minYear, maxYear, yearsWithData } = await loadQuestions(
+  const { questions, window } = await fetchQuestionsForScope(
     scope,
     targetYear,
     yearRange
   );
+  const { minYear, maxYear, yearsWithData, excludedYears } = window;
 
-  const papersAnalysed = await countPapers(scope, minYear, maxYear);
+  const papersAnalysed = await countPapersInYears(scope, yearsWithData);
 
   return {
     papersAnalysed,
     questionsFound: questions.length,
-    yearsCovered: yearsWithData,
+    yearsCovered: yearsWithData.length,
     yearWindow: { from: minYear, to: maxYear },
+    excludedYears,
   };
 }
 

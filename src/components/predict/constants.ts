@@ -39,8 +39,8 @@ export const EXAM_OPTIONS = EXAM_CATALOG.map((item) => ({
 }));
 
 export const YEAR_RANGE_OPTIONS = [
-  { value: 5 as const, label: "Last 5 years" },
-  { value: 10 as const, label: "Last 10 years" },
+  { value: 5 as const, label: "Last 5 exam years" },
+  { value: 10 as const, label: "Last 10 exam years" },
 ];
 
 export const LOADING_MESSAGES = [

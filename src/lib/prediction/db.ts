@@ -1,8 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadScopedQuestions } from "@/lib/prediction/questions-loader";
 import {
-  getYearWindow,
-  type YearWindow,
+  resolveYearWindowFromPaperYears,
+  type ResolvedYearWindow,
 } from "@/lib/prediction/year-window";
 import { enrichPredictionPattern } from "@/lib/prediction/patterns";
 import type {
@@ -144,6 +144,27 @@ function applyPaperScope<T extends { eq: (col: string, val: string) => T; in: (c
   return q;
 }
 
+export async function fetchPaperYears(
+  scope: QuestionScope,
+  maxYear?: number
+): Promise<number[]> {
+  const supabase = createAdminClient();
+  let query = supabase.from("papers").select("year");
+  query = applyPaperScope(query, scope, { includePartStream: false });
+  if (maxYear != null) query = query.lte("year", maxYear);
+
+  const { data, error } = await query;
+  if (error || !data) return [];
+
+  return [
+    ...new Set(
+      data
+        .map((row) => row.year)
+        .filter((y): y is number => typeof y === "number")
+    ),
+  ];
+}
+
 export async function fetchLatestPaperYear(
   scope: QuestionScope
 ): Promise<number | null> {
@@ -165,16 +186,21 @@ export async function resolveYearWindow(
   scope: QuestionScope,
   targetYear: number,
   yearRange: number
-): Promise<YearWindow> {
+): Promise<ResolvedYearWindow> {
   const latestDataYear = await fetchLatestPaperYear(scope);
-  return getYearWindow(targetYear, yearRange, latestDataYear);
+  const examMaxYear =
+    latestDataYear != null
+      ? Math.min(targetYear - 1, latestDataYear)
+      : targetYear - 1;
+  const paperYears = await fetchPaperYears(scope, examMaxYear);
+  return resolveYearWindowFromPaperYears(paperYears, yearRange, examMaxYear);
 }
 
 export async function fetchQuestionsForScope(
   scope: QuestionScope,
   targetYear: number,
   yearRange: number
-): Promise<{ questions: QuestionRow[]; window: YearWindow }> {
+): Promise<{ questions: QuestionRow[]; window: ResolvedYearWindow }> {
   const window = await resolveYearWindow(scope, targetYear, yearRange);
   const questions = await loadScopedQuestions(scope, window);
   return { questions, window };
@@ -438,6 +464,26 @@ export async function countPapers(
     .select("*", { count: "exact", head: true })
     .gte("year", minYear)
     .lte("year", maxYear);
+
+  query = applyPaperScope(query, scope, { includePartStream: false });
+
+  const { count, error } = await query;
+
+  if (error) return 0;
+  return count ?? 0;
+}
+
+export async function countPapersInYears(
+  scope: QuestionScope,
+  years: number[]
+): Promise<number> {
+  if (years.length === 0) return 0;
+
+  const supabase = createAdminClient();
+  let query = supabase
+    .from("papers")
+    .select("*", { count: "exact", head: true })
+    .in("year", years);
 
   query = applyPaperScope(query, scope, { includePartStream: false });
 

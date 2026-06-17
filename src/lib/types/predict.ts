@@ -60,8 +60,10 @@ export type PredictionMeta = {
   papersAnalysed: number;
   questionsFound: number;
   yearsCovered: number;
-  /** Inclusive years of past papers used in this analysis */
+  /** Inclusive span of exam years in this analysis (may include gaps) */
   yearWindow?: { from: number; to: number };
+  /** Years inside the span with no paper available */
+  excludedYears?: number[];
   chapters: ChapterFrequency[];
 };
 
