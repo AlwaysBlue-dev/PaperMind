@@ -4,10 +4,17 @@ import {
   type QuestionRow,
   type QuestionScope,
 } from "@/lib/prediction/db";
-import { sharedSignificantWords, tokenize } from "@/lib/prediction/keywords";
+import { chapterScoreMap, scoreChapters } from "@/lib/prediction/chapter-scoring";
+import {
+  clusterQuestions,
+  pickRepresentative,
+  type QuestionCluster,
+} from "@/lib/prediction/clustering";
+import { analyzeAppearancePattern } from "@/lib/prediction/patterns";
 import { isYearInRange } from "@/lib/prediction/year-window";
 import type {
   ChapterFrequency,
+  PatternHint,
   PredictionMeta,
   QuestionType,
 } from "@/lib/types/predict";
@@ -30,11 +37,18 @@ export type EnginePrediction = {
   subject_id: string;
   board_id: string;
   target_year: number;
+  patternHint: PatternHint | null;
 };
 
-type QuestionCluster = {
-  questions: QuestionRow[];
-  tokens: string[];
+/** Total predictions returned (≈ full paper size). */
+export const PREDICTION_LIMIT = 36;
+const TOP_CHAPTERS = 8;
+const CLUSTERS_PER_CHAPTER = 3;
+
+const TYPE_QUOTAS: Record<QuestionType, number> = {
+  mcq: 12,
+  short: 12,
+  long: 12,
 };
 
 function classifyTrend(
@@ -71,47 +85,14 @@ function trendScore(trend: EngineTrend): number {
   }
 }
 
-function recencyWeight(years: number[], minYear: number, maxYear: number): number {
+function recencyWeight(
+  years: number[],
+  minYear: number,
+  maxYear: number
+): number {
   const span = Math.max(maxYear - minYear, 1);
   const weights = years.map((y) => (y - minYear) / span);
   return weights.reduce((a, b) => a + b, 0) / weights.length;
-}
-
-function clusterQuestions(questions: QuestionRow[]): QuestionCluster[] {
-  const clusters: QuestionCluster[] = [];
-  const assigned = new Set<string>();
-
-  for (const question of questions) {
-    if (assigned.has(question.id)) continue;
-
-    const tokens = tokenize(question.question_text);
-    const cluster: QuestionCluster = { questions: [question], tokens };
-    assigned.add(question.id);
-
-    for (const other of questions) {
-      if (assigned.has(other.id)) continue;
-      const otherTokens = tokenize(other.question_text);
-      if (sharedSignificantWords(tokens, otherTokens) >= 3) {
-        cluster.questions.push(other);
-        assigned.add(other.id);
-        cluster.tokens = [...new Set([...cluster.tokens, ...otherTokens])];
-      }
-    }
-
-    clusters.push(cluster);
-  }
-
-  return clusters;
-}
-
-function pickRepresentative(cluster: QuestionCluster): QuestionRow {
-  return cluster.questions.reduce((best, q) => {
-    if (q.year > best.year) return q;
-    if (q.year === best.year && q.question_text.length > best.question_text.length) {
-      return q;
-    }
-    return best;
-  }, cluster.questions[0]);
 }
 
 function scoreCluster(
@@ -119,7 +100,8 @@ function scoreCluster(
   totalYears: number,
   minYear: number,
   maxYear: number,
-  targetYear: number
+  targetYear: number,
+  chapterBoost: number
 ): EnginePrediction {
   const representative = pickRepresentative(cluster);
   const yearsAppeared = [
@@ -135,12 +117,32 @@ function scoreCluster(
   const syllabusBonus = cluster.questions.some((q) => q.is_syllabus_flagged)
     ? 1
     : 0;
+  const pattern = analyzeAppearancePattern(
+    yearsAppeared,
+    maxYear,
+    targetYear
+  );
+
+  const onlyLastYear =
+    yearsAppeared.length > 0 &&
+    yearsAppeared.every((y) => y === maxYear);
+  const rotationPenalty = onlyLastYear ? 0.08 : 0;
+
+  const avgMarks =
+    cluster.questions.reduce((s, q) => s + (q.marks ?? 1), 0) /
+    cluster.questions.length;
+  const marksBoost = Math.min(avgMarks / 10, 0.12);
 
   const raw =
-    frequencyScore * 0.4 +
-    recency * 0.3 +
-    tScore * 0.2 +
-    syllabusBonus * 0.15;
+    frequencyScore * 0.24 +
+    recency * 0.2 +
+    tScore * 0.12 +
+    syllabusBonus * 0.08 +
+    pattern.overdueScore * 0.1 +
+    pattern.regularityScore * 0.06 +
+    chapterBoost * 0.12 +
+    marksBoost -
+    rotationPenalty;
 
   const probabilityScore = Math.min(99, Math.max(1, Math.round(raw * 100)));
 
@@ -168,7 +170,76 @@ function scoreCluster(
     subject_id: representative.subject_id,
     board_id: representative.board_id,
     target_year: targetYear,
+    patternHint: pattern.patternHint,
   };
+}
+
+function predictionKey(p: EnginePrediction): string {
+  return `${p.chapterNumber}:${p.questionType}:${p.questionText.slice(0, 80)}`;
+}
+
+function selectChapterFirstPredictions(
+  scored: EnginePrediction[],
+  topChapterNumbers: Set<number>
+): EnginePrediction[] {
+  const selected: EnginePrediction[] = [];
+  const seen = new Set<string>();
+
+  function add(p: EnginePrediction) {
+    const key = predictionKey(p);
+    if (seen.has(key) || selected.length >= PREDICTION_LIMIT) return;
+    seen.add(key);
+    selected.push(p);
+  }
+
+  const byChapter = new Map<number, EnginePrediction[]>();
+  for (const p of scored) {
+    const list = byChapter.get(p.chapterNumber) ?? [];
+    list.push(p);
+    byChapter.set(p.chapterNumber, list);
+  }
+  for (const list of byChapter.values()) {
+    list.sort((a, b) => b.probabilityScore - a.probabilityScore);
+  }
+
+  for (const chapterNumber of topChapterNumbers) {
+    const list = byChapter.get(chapterNumber) ?? [];
+    for (const p of list.slice(0, CLUSTERS_PER_CHAPTER)) {
+      add(p);
+    }
+  }
+
+  const typeCounts: Record<QuestionType, number> = {
+    mcq: 0,
+    short: 0,
+    long: 0,
+  };
+  for (const p of selected) typeCounts[p.questionType] += 1;
+
+  const pool = [...scored].sort(
+    (a, b) => b.probabilityScore - a.probabilityScore
+  );
+
+  for (const type of ["mcq", "short", "long"] as QuestionType[]) {
+    while (
+      typeCounts[type] < TYPE_QUOTAS[type] &&
+      selected.length < PREDICTION_LIMIT
+    ) {
+      const next = pool.find(
+        (p) => p.questionType === type && !seen.has(predictionKey(p))
+      );
+      if (!next) break;
+      add(next);
+      typeCounts[type] += 1;
+    }
+  }
+
+  for (const p of pool) {
+    if (selected.length >= PREDICTION_LIMIT) break;
+    add(p);
+  }
+
+  return selected.sort((a, b) => b.probabilityScore - a.probabilityScore);
 }
 
 async function loadQuestions(
@@ -228,36 +299,29 @@ export async function computeChapterHeatmap(
   targetYear: number,
   yearRange: number
 ): Promise<ChapterFrequency[]> {
-  const { questions } = await loadQuestions(scope, targetYear, yearRange);
-
-  const chapterMap = new Map<
-    number,
-    { name: string; years: Set<number>; count: number }
-  >();
-
-  for (const q of questions) {
-    const existing = chapterMap.get(q.chapter_number) ?? {
-      name: q.chapter_name,
-      years: new Set<number>(),
-      count: 0,
-    };
-    existing.years.add(q.year);
-    existing.count += 1;
-    chapterMap.set(q.chapter_number, existing);
-  }
-
-  const maxFreq = Math.max(
-    ...[...chapterMap.values()].map((c) => c.years.size),
-    1
+  const { questions, minYear, maxYear, yearsWithData } = await loadQuestions(
+    scope,
+    targetYear,
+    yearRange
   );
 
-  return [...chapterMap.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([chapterNumber, data]) => ({
-      chapterNumber,
-      chapterName: data.name,
-      frequency: Math.round((data.years.size / maxFreq) * 100),
-    }));
+  const chapterScores = scoreChapters(
+    questions,
+    minYear,
+    maxYear,
+    targetYear,
+    yearsWithData
+  );
+
+  return chapterScores.map((ch) => ({
+    chapterNumber: ch.chapterNumber,
+    chapterName: ch.chapterName,
+    yearsAppeared: ch.yearsAppeared.length,
+    windowYears: Math.max(yearsWithData, 1),
+    rate: Math.round(
+      (ch.yearsAppeared.length / Math.max(yearsWithData, 1)) * 100
+    ),
+  }));
 }
 
 export async function generatePredictions(
@@ -265,20 +329,36 @@ export async function generatePredictions(
   targetYear: number,
   yearRange = 10
 ): Promise<EnginePrediction[]> {
-  const { questions, minYear, maxYear, totalYears } = await loadQuestions(
-    scope,
-    targetYear,
-    yearRange
-  );
+  const { questions, minYear, maxYear, totalYears, yearsWithData } =
+    await loadQuestions(scope, targetYear, yearRange);
 
   if (questions.length === 0) return [];
 
-  const clusters = clusterQuestions(questions);
-  const scored = clusters.map((c) =>
-    scoreCluster(c, totalYears, minYear, maxYear, targetYear)
+  const chapterScores = scoreChapters(
+    questions,
+    minYear,
+    maxYear,
+    targetYear,
+    yearsWithData
+  );
+  const chBoost = chapterScoreMap(chapterScores);
+  const topChapterNumbers = new Set(
+    chapterScores.slice(0, TOP_CHAPTERS).map((c) => c.chapterNumber)
   );
 
-  return scored
-    .sort((a, b) => b.probabilityScore - a.probabilityScore)
-    .slice(0, 20);
+  const clusters = clusterQuestions(questions);
+  const scored = clusters.map((c) => {
+    const rep = pickRepresentative(c);
+    const boost = chBoost.get(rep.chapter_number) ?? 0;
+    return scoreCluster(
+      c,
+      totalYears,
+      minYear,
+      maxYear,
+      targetYear,
+      boost
+    );
+  });
+
+  return selectChapterFirstPredictions(scored, topChapterNumbers);
 }

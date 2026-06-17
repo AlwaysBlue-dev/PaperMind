@@ -18,6 +18,8 @@ export type QuestionType = "short" | "long" | "mcq";
 
 export type Trend = "up" | "down" | "flat";
 
+export type PatternHint = "due" | "cyclical" | "regular";
+
 export type Board = {
   id: string;
   name: string;
@@ -49,6 +51,7 @@ export type Prediction = {
   yearsAppeared: number[];
   lastAppearedYear: number;
   trend: Trend;
+  patternHint?: PatternHint | null;
   isSyllabusFlagged: boolean;
   marks?: number;
 };
@@ -65,7 +68,12 @@ export type PredictionMeta = {
 export type ChapterFrequency = {
   chapterNumber: number;
   chapterName: string;
-  frequency: number;
+  /** Distinct exam years this chapter appeared in the analysis window */
+  yearsAppeared: number;
+  /** Distinct exam years with any questions in the window */
+  windowYears: number;
+  /** Share of exam years tested: yearsAppeared / windowYears (0–100) */
+  rate: number;
 };
 
 export type PredictionsResponse = {

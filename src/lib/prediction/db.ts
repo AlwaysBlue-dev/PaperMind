@@ -4,10 +4,12 @@ import {
   getYearWindow,
   type YearWindow,
 } from "@/lib/prediction/year-window";
+import { enrichPredictionPattern } from "@/lib/prediction/patterns";
 import type {
   ExamPart,
   ExamStream,
   ExamType,
+  PatternHint,
   QuestionType,
   Trend,
 } from "@/lib/types/predict";
@@ -71,8 +73,12 @@ export function mapTrendToUi(trend: string): Trend {
   return "flat";
 }
 
-export function mapPredictionRow(row: PredictionRow) {
-  return {
+export function mapPredictionRow(
+  row: PredictionRow,
+  context?: { targetYear: number; maxYear: number }
+) {
+  const yearsAppeared = row.years_appeared ?? [];
+  const mapped = {
     id: row.id,
     questionText: row.question_text,
     chapterName: row.chapter_name,
@@ -81,14 +87,21 @@ export function mapPredictionRow(row: PredictionRow) {
     probabilityScore: row.probability_score,
     frequencyCount: row.frequency_count,
     totalYears: row.total_years,
-    yearsAppeared: row.years_appeared ?? [],
+    yearsAppeared,
     lastAppearedYear: row.last_appeared_year,
     trend: mapTrendToUi(row.trend),
     isSyllabusFlagged: Boolean(
       row.is_syllabus_flagged ?? row.syllabus_flagged ?? false
     ),
     marks: row.marks ?? defaultMarks(row.question_type),
+    patternHint: null as PatternHint | null,
   };
+
+  if (context) {
+    mapped.patternHint = enrichPredictionPattern(mapped, context);
+  }
+
+  return mapped;
 }
 
 export function defaultMarks(type: QuestionType): number {
@@ -202,6 +215,8 @@ export async function fetchCachedPredictions(
   const sevenDaysAgo = new Date(
     Date.now() - 7 * 24 * 60 * 60 * 1000
   ).toISOString();
+  const subjectIds = uniqueIds(scope.subjectId, ...(scope.subjectIds ?? []));
+  const boardIds = uniqueIds(scope.boardId, ...(scope.boardIds ?? []));
 
   async function runScoped(
     includeExamFields: boolean,
@@ -210,8 +225,8 @@ export async function fetchCachedPredictions(
     let query = supabase
       .from("predictions")
       .select("*")
-      .eq("board_id", scope.boardId)
-      .eq("subject_id", scope.subjectId)
+      .in("board_id", boardIds)
+      .in("subject_id", subjectIds)
       .eq("target_year", targetYear)
       .gte("created_at", sevenDaysAgo);
 
@@ -230,18 +245,31 @@ export async function fetchCachedPredictions(
 
   let { data, error } = await runScoped(true, true);
   if (error?.message?.includes("year_range")) {
-    // Without year_range column, skip cache so 5y vs 10y always recalculates.
-    return [];
+    ({ data, error } = await runScoped(true, false));
   }
   if (error?.message?.includes("column")) {
     ({ data, error } = await runScoped(false, true));
-    if (error?.message?.includes("year_range")) return [];
-  }
-  if (error?.message?.includes("column")) {
-    ({ data, error } = await runScoped(false, false));
+    if (error?.message?.includes("year_range")) {
+      ({ data, error } = await runScoped(false, false));
+    }
   }
   if (error) throw error;
-  return (data ?? []) as PredictionRow[];
+
+  const rows = (data ?? []) as PredictionRow[];
+  if (rows.length > 0) return rows;
+
+  // Relaxed lookup when scoped columns or legacy subject rows differ.
+  const { data: relaxed, error: relaxedError } = await supabase
+    .from("predictions")
+    .select("*")
+    .in("board_id", boardIds)
+    .in("subject_id", subjectIds)
+    .eq("target_year", targetYear)
+    .gte("created_at", sevenDaysAgo)
+    .order("probability_score", { ascending: false });
+
+  if (relaxedError) throw relaxedError;
+  return (relaxed ?? []) as PredictionRow[];
 }
 
 type PredictionInsert = Omit<

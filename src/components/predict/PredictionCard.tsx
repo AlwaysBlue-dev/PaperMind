@@ -13,7 +13,8 @@ import {
   incrementModelAnswerCount,
   isModelAnswerRateLimited,
 } from "@/lib/model-answer-rate-limit";
-import type { Prediction, Trend } from "@/lib/types/predict";
+import type { Prediction, Trend, PatternHint } from "@/lib/types/predict";
+import { patternHintLabel } from "@/lib/prediction/patterns";
 import { MathText } from "@/components/ui/MathText";
 
 type PredictionCardProps = {
@@ -42,6 +43,14 @@ function TrendIcon({ trend }: { trend: Trend }) {
 
 function typeLabel(type: string): string {
   return type.toUpperCase();
+}
+
+function patternBadgeClass(hint: PatternHint): string {
+  if (hint === "cyclical") {
+    return "bg-primary/15 text-primary border-primary/30";
+  }
+  if (hint === "due") return "bg-accent/15 text-accent border-accent/30";
+  return "bg-muted text-foreground-muted border-border";
 }
 
 function AnswerSkeleton() {
@@ -196,6 +205,18 @@ export function PredictionCard({
         <span className="rounded-full bg-muted px-2.5 py-1">
           Last seen {prediction.lastAppearedYear}
         </span>
+        {prediction.patternHint ? (
+          <span
+            className={`rounded-full border px-2.5 py-1 ${patternBadgeClass(prediction.patternHint)}`}
+            title={patternHintLabel(prediction.patternHint) ?? undefined}
+          >
+            {prediction.patternHint === "due"
+              ? "Due"
+              : prediction.patternHint === "cyclical"
+                ? "Cyclical"
+                : "Regular"}
+          </span>
+        ) : null}
       </div>
 
       {showStudiedToggle && (

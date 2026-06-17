@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { LoadingOverlay } from "@/components/predict/LoadingOverlay";
 import { PredictFormDesktop } from "@/components/predict/PredictFormDesktop";
 import { PredictFormMobile } from "@/components/predict/PredictFormMobile";
+import { PredictHowItWorks } from "@/components/predict/PredictHowItWorks";
 import { PredictResults } from "@/components/predict/PredictResults";
 import {
   LAUNCH_DEFAULTS,
@@ -14,6 +15,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { appendPredictionScopeParams } from "@/lib/exam-params";
 import { parseUrlSelection } from "@/lib/predict/parse-url-selection";
+import { resolveTargetYear } from "@/lib/predict/target-year";
 import { useToast } from "@/components/ui/Toast";
 import type {
   ExamPart,
@@ -138,7 +140,7 @@ function PredictPageContent() {
     setIsLoading(true);
     setResults(null);
 
-    const targetYear = new Date().getFullYear() + 1;
+    const targetYear = resolveTargetYear(searchParams.get("targetYear"));
     const params = new URLSearchParams({
       subjectId: subjectId!,
       boardId: boardId!,
@@ -181,7 +183,16 @@ function PredictPageContent() {
     } finally {
       setIsLoading(false);
     }
-  }, [isComplete, subjectId, boardId, yearRange, examType, part, stream]);
+  }, [
+    isComplete,
+    subjectId,
+    boardId,
+    yearRange,
+    examType,
+    part,
+    stream,
+    searchParams,
+  ]);
 
   const handleToggleSave = useCallback(
     async (id: string) => {
@@ -244,7 +255,8 @@ function PredictPageContent() {
   }, [results]);
 
   return (
-    <div className="predict-page flex min-h-0 flex-1 flex-col md:flex-row">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="predict-page flex min-h-0 flex-1 flex-col md:flex-row">
       {isLoading && <LoadingOverlay />}
 
       <PredictFormDesktop
@@ -296,7 +308,8 @@ function PredictPageContent() {
             AI-ranked question predictions for your selection
           </p>
         </div>
-        <div className="flex flex-1 flex-col px-5 py-5 md:px-6 md:py-6">
+        <div className="flex flex-1 flex-col gap-5 px-5 py-5 md:px-6 md:py-6">
+          <PredictHowItWorks />
           <PredictResults
             data={results}
             isLoading={isLoading}
@@ -306,6 +319,7 @@ function PredictPageContent() {
           />
         </div>
       </div>
+    </div>
     </div>
   );
 }

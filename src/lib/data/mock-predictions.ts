@@ -163,12 +163,17 @@ const QUESTIONS: Omit<Prediction, "id">[] = [
 ];
 
 function buildChapterHeatmap(yearRange: YearRange): ChapterFrequency[] {
-  const maxFreq = Math.max(...CHAPTERS.map((_, i) => 3 + (i % 5)));
-  return CHAPTERS.map((ch, i) => ({
-    chapterNumber: ch.number,
-    chapterName: ch.name,
-    frequency: Math.round(((3 + (i % 5)) / maxFreq) * 100),
-  })).slice(0, yearRange === 5 ? 8 : yearRange === 10 ? 10 : 11);
+  return CHAPTERS.map((ch, i) => {
+    const yearsAppeared = 3 + (i % 5);
+    const windowYears = yearRange;
+    return {
+      chapterNumber: ch.number,
+      chapterName: ch.name,
+      yearsAppeared: Math.min(yearsAppeared, windowYears),
+      windowYears,
+      rate: Math.round((Math.min(yearsAppeared, windowYears) / windowYears) * 100),
+    };
+  }).slice(0, yearRange === 5 ? 8 : yearRange === 10 ? 10 : 11);
 }
 
 export function generateMockPredictions(yearRange: YearRange): PredictionsResponse {

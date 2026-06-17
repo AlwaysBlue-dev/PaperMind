@@ -24,6 +24,7 @@ import {
   mapPredictionRow,
   savePredictions,
 } from "@/lib/prediction/db";
+import { resolveTargetYear } from "@/lib/predict/target-year";
 import type { YearRange } from "@/lib/types/predict";
 
 export async function GET(request: Request) {
@@ -33,10 +34,10 @@ export async function GET(request: Request) {
   const boardIdRaw = searchParams.get("boardId");
   const part = parseExamPartParam(searchParams.get("part"));
   const stream = parseExamStreamParam(searchParams.get("stream"));
-  const targetYear = parseInt(
-    searchParams.get("targetYear") ?? String(new Date().getFullYear() + 1),
-    10
-  );
+  const targetYear = resolveTargetYear(searchParams.get("targetYear"));
+  const skipCache =
+    searchParams.get("refresh") === "1" ||
+    searchParams.get("regenerate") === "1";
   const yearRangeParam = parseInt(searchParams.get("yearRange") ?? "10", 10);
   const yearRange = ([5, 10] as YearRange[]).includes(
     yearRangeParam as YearRange
@@ -48,7 +49,13 @@ export async function GET(request: Request) {
     papersAnalysed: 0,
     questionsFound: 0,
     yearsCovered: 0,
-    chapters: [] as { chapterNumber: number; chapterName: string; frequency: number }[],
+    chapters: [] as {
+      chapterNumber: number;
+      chapterName: string;
+      yearsAppeared: number;
+      windowYears: number;
+      rate: number;
+    }[],
   };
 
   if (!examType || !subjectIdRaw || !boardIdRaw) {
@@ -121,7 +128,9 @@ export async function GET(request: Request) {
       });
     }
 
-    const cached = await fetchCachedPredictions(scope, targetYear, yearRange);
+    const cached = skipCache
+      ? []
+      : await fetchCachedPredictions(scope, targetYear, yearRange);
 
     let predictionRows = cached;
 
@@ -146,8 +155,8 @@ export async function GET(request: Request) {
           exam_type: scope.examType,
           part: scope.part ?? null,
           stream: scope.stream ?? null,
-          subject_id: p.subject_id,
-          board_id: p.board_id,
+          subject_id: scope.subjectId,
+          board_id: scope.boardId,
           target_year: p.target_year,
           year_range: yearRange,
           question_text: p.questionText,
@@ -171,13 +180,19 @@ export async function GET(request: Request) {
       computeChapterHeatmap(scope, targetYear, yearRange),
     ]);
 
+    const patternContext = stats.yearWindow
+      ? { targetYear, maxYear: stats.yearWindow.to }
+      : undefined;
+
     const user = await getServerUser();
     if (user) {
       incrementPredictionsViewed(user.id).catch(() => {});
     }
 
     return NextResponse.json({
-      predictions: predictionRows.map(mapPredictionRow),
+      predictions: predictionRows.map((row) =>
+        mapPredictionRow(row, patternContext)
+      ),
       meta: {
         ...stats,
         chapters,

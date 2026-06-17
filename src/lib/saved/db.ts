@@ -182,6 +182,9 @@ export async function fetchUserSavedPredictions(
         model_answer_generated_at: null,
         created_at: row.created_at,
         subject_id: p.subject_id,
+      }, {
+        targetYear: p.target_year,
+        maxYear: p.target_year - 1,
       });
 
       return {
